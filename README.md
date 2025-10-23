@@ -6,7 +6,7 @@ A Windows utility that automatically arranges all open windows into a neat, casc
 
 ## What It Does
 
-**CenterWindows** detects all visible windows across all monitors and stacks them in a symmetric pyramid arrangement:
+**Wah Wah Button** detects all visible windows across all monitors and stacks them in a symmetric pyramid arrangement:
 
 - **Fullscreen windows** stay in the back (never moved or resized).
 - **Normal windows** are resized and positioned with:
@@ -24,29 +24,37 @@ On startup, the script plays a fun sound effect (`stooges.wav`) to let you know 
 
 ## Installation
 
-1. **Copy the files** to a folder of your choice (e.g., `C:\Users\YourName\OneDrive\Desktop\Utilities`):
+1. **Copy the files** to any folder you like—all three files must be in the same directory:
 
-   - `CenterWindows.ps1` – The main PowerShell script
-   - `CenterWindows.bat` – Batch launcher
+   - `WahWahButton.ps1` – The main PowerShell script
+   - `WahWahButton.bat` – Batch launcher (uses relative paths)
    - `stooges.wav` – Startup sound effect (optional but fun!)
+   - `Wah Wah Button.lnk` – Pre-configured shortcut (optional)
 
-2. **Create a desktop shortcut** (optional, for one-click access):
+   The scripts use relative paths, so the folder can be located anywhere on your system.
+
+2. **Use the included shortcut** or create your own:
+
+   **Option A: Use the included `Wah Wah Button.lnk`**
+
+   - Copy or move `Wah Wah Button.lnk` to your desktop or taskbar.
+   - Double-click to run!
+
+   **Option B: Create a new shortcut manually**
 
    - Right-click on your desktop → **New** → **Shortcut**.
-   - For the location, browse to `CenterWindows.bat` (or paste the full path).
-   - Click **Next**, name it `Center Windows`, and click **Finish**.
-   - (Optional) Right-click the shortcut → **Properties** → **Change Icon...** to pick a custom icon.
+   - Browse to `WahWahButton.bat` in your folder.
+   - Click **Next**, name it `Wah Wah Button`, and click **Finish**.
+   - Right-click the shortcut → **Properties** → set **Start in** to the folder containing your files.
+   - (Optional) Click **Change Icon...** to customize the icon.
 
-3. **Set the working directory** (if not already set):
-   - Right-click the shortcut → **Properties**.
-   - In **Start in**, enter the path to your `Utilities` folder (e.g., `C:\Users\YourName\OneDrive\Desktop\Utilities`).
-   - Click **OK**.
+3. **That's it!** The batch file automatically finds the PowerShell script and sound file in the same directory.
 
 ## Usage
 
 ### Quick Start
 
-- **Double-click** the `Center Windows` shortcut (or `CenterWindows.bat`).
+- **Double-click** the `Wah Wah Button` shortcut (or `WahWahButton.bat`).
 - All open windows will be arranged into a pyramid on each monitor.
 - Fullscreen apps (games, videos) remain untouched in the background.
 
@@ -79,7 +87,7 @@ Now you can press that combo anytime to re-organize your windows.
 
 ### The script doesn't run / nothing happens
 
-- **Check the path**: Open `CenterWindows.bat` in a text editor and verify the path to `CenterWindows.ps1` is correct.
+- **Check the path**: Open `WahWahButton.bat` in a text editor and verify the path to `WahWahButton.ps1` is correct.
 - **Execution Policy**: If Windows blocks the script, open PowerShell as Administrator and run:
   ```powershell
   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
@@ -91,7 +99,7 @@ Now you can press that combo anytime to re-organize your windows.
 - **Verify the WAV file**: Make sure `stooges.wav` is in the same folder as the script.
 - **Check volume**: Ensure your system volume is up and the correct audio device is selected.
 - **Test the WAV**: Double-click `stooges.wav` in File Explorer to confirm it plays in your default media player.
-- **Check the log**: If playback fails, look for `%TEMP%\CenterWindows_SFX.log` for error details.
+- **Check the log**: If playback fails, look for `%TEMP%\WahWahButton_SFX.log` for error details.
 
 ### Some windows aren't detected
 
@@ -102,7 +110,7 @@ Now you can press that combo anytime to re-organize your windows.
 ### Windows are too small / too large
 
 - The script calculates sizes based on your screen resolution and the number of windows.
-- You can edit `CenterWindows.ps1` and adjust the `$minWidth`, `$minHeight`, and `$cascadeOffset` variables near the pyramid sizing logic to fine-tune the layout.
+- You can edit `WahWahButton.ps1` and adjust the `$minWidth`, `$minHeight`, and `$cascadeOffset` variables near the pyramid sizing logic to fine-tune the layout.
 
 ### I want to restore my original layout
 
@@ -120,7 +128,7 @@ Now you can press that combo anytime to re-organize your windows.
 
 ## Customization
 
-Want to tweak the behavior? Open `CenterWindows.ps1` in your favorite editor and look for these sections:
+Want to tweak the behavior? Open `WahWahButton.ps1` in your favorite editor and look for these sections:
 
 - **Skip certain apps**: Edit the `$skipClasses` array to exclude specific window classes.
 - **Adjust cascade spacing**: Change `$cascadeOffset` to increase/decrease the gap between layers.
@@ -140,4 +148,3 @@ This project is provided as-is for personal use. Feel free to modify and share!
 ---
 
 **Enjoy your newly organized desktop!** 🎉
-

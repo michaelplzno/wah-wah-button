@@ -70,7 +70,7 @@ try {
     $p.PlaySync()
 } catch {
     try {
-        "[$(Get-Date -Format o)] ERROR: $($_.Exception.Message)" | Out-File -FilePath "$env:TEMP\CenterWindows_SFX.log" -Append -Encoding UTF8
+        "[$(Get-Date -Format o)] ERROR: $($_.Exception.Message)" | Out-File -FilePath "$env:TEMP\WahWahButton_SFX.log" -Append -Encoding UTF8
     } catch {}
 }
 '@
