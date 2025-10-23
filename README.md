@@ -2,6 +2,8 @@
 
 # Wah Wah Button - Windows 11 productivity app to center and layer all open windows when pressed.
 
+[▶ Watch a 30-second demo](https://www.youtube.com/shorts/37SKrFBWrjY)
+
 A Windows utility that automatically arranges all open windows into a neat, cascading pyramid layout—perfect for quickly organizing a cluttered desktop.
 
 ## What It Does
@@ -153,4 +155,3 @@ See the `LICENSE` file included in this repository for the full text.
 ---
 
 **Enjoy your newly organized desktop!** 🎉
-
