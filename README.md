@@ -137,7 +137,12 @@ Want to tweak the behavior? Open `WahWahButton.ps1` in your favorite editor and 
 
 ## License
 
-This project is provided as-is for personal use. Feel free to modify and share!
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+- You may copy, modify, and redistribute this software under the terms of the GPLv3.
+- There is no warranty; see the license for details.
+
+See the `LICENSE` file included in this repository for the full text.
 
 ## Credits
 
