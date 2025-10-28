@@ -1,3 +1,11 @@
+# ============================================================================
+# CONFIGURATION: Window titles to skip (widgets, background UI, etc.)
+# Add window titles or patterns here to exclude them from being arranged
+# ============================================================================
+$script:skipWindowTitles = @(
+    'Xbox'           # Xbox Game Bar widgets
+)
+
 Add-Type -Language CSharp -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -35,9 +43,13 @@ namespace Win32 {
     public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex) { return IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex)); }
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out bool pvAttribute, int cbAttribute);
 
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr hMonitor, MONITORINFO lpmi);
+    
+    public const int DWMWA_CLOAKED = 14;
 
     public const uint GA_ROOT = 2;
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
@@ -52,6 +64,9 @@ namespace Win32 {
         public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_TOPMOST = 0x00000008;
+    public const int GWL_STYLE = -16;
+    public const int WS_VISIBLE = 0x10000000;
+    public const int WS_MINIMIZE = 0x20000000;
   }
 }
 "@
@@ -118,6 +133,19 @@ $callback = [Win32.NativeMethods+EnumWindowsProc]{
 
     # Skip minimized windows; include maximized so we can control Z-order later
     if ([Win32.NativeMethods]::IsIconic($hWnd)) { return $true }
+    
+    # Additional check for minimized windows that don't report as iconic
+    # Minimized windows often have extreme negative coordinates
+    if ($rect.Left -le -30000 -or $rect.Top -le -30000) { return $true }
+
+    # Check if window is cloaked (hidden UWP/modern apps)
+    $isCloaked = $false
+    try {
+        $result = [Win32.NativeMethods]::DwmGetWindowAttribute($hWnd, [Win32.NativeMethods]::DWMWA_CLOAKED, [ref]$isCloaked, [System.Runtime.InteropServices.Marshal]::SizeOf([Type]::GetType("System.Boolean")))
+        if ($isCloaked) { return $true }
+    } catch {
+        # DwmGetWindowAttribute might fail on some windows, continue anyway
+    }
 
     # Get current window rect
     $rect = New-Object Win32.RECT
@@ -125,6 +153,10 @@ $callback = [Win32.NativeMethods+EnumWindowsProc]{
     $w = $rect.Right - $rect.Left
     $h = $rect.Bottom - $rect.Top
     if ($w -le 0 -or $h -le 0) { return $true }
+    
+    # Skip tiny windows (widgets, background UI elements, system tray elements)
+    # Real user windows are typically at least 400x300
+    if ($w -lt 400 -or $h -lt 300) { return $true }
 
     # Get the monitor this window is currently on
     $hMon = [Win32.NativeMethods]::MonitorFromWindow($hWnd, [Win32.NativeMethods]::MONITOR_DEFAULTTOPRIMARY)
@@ -138,20 +170,41 @@ $callback = [Win32.NativeMethods+EnumWindowsProc]{
     $area = $w * $h
     $monArea = [Math]::Max(1, $monWidth * $monHeight)
     $coverage = [double]$area / [double]$monArea
-    $alignedToWork = ([Math]::Abs($rect.Left - $work.Left) -le 1 -and 
-                      [Math]::Abs($rect.Top - $work.Top) -le 1 -and 
-                      [Math]::Abs($rect.Right - $work.Right) -le 1 -and 
-                      [Math]::Abs($rect.Bottom - $work.Bottom) -le 1)
-    $isFullscreen = ([Win32.NativeMethods]::IsZoomed($hWnd)) -or ($coverage -ge 0.95 -and $alignedToWork)
+    $alignedToWork = ([Math]::Abs($rect.Left - $work.Left) -le 8 -and 
+                      [Math]::Abs($rect.Top - $work.Top) -le 8 -and 
+                      [Math]::Abs($rect.Right - $work.Right) -le 8 -and 
+                      [Math]::Abs($rect.Bottom - $work.Bottom) -le 8)
+    # Skip truly fullscreen windows: maximized AND covering 98%+ of work area
+    $isFullscreen = ([Win32.NativeMethods]::IsZoomed($hWnd)) -and ($coverage -ge 0.98) -and $alignedToWork
 
     # Detect always-on-top (topmost) extended style
     $exPtr = [Win32.NativeMethods]::GetWindowLongPtr($hWnd, [Win32.NativeMethods]::GWL_EXSTYLE)
     $exVal = [int]($exPtr.ToInt64() -band 0xFFFFFFFF)
     $isTopmost = (($exVal -band [Win32.NativeMethods]::WS_EX_TOPMOST) -ne 0)
 
-    # Track Z-order index from enumeration (EnumWindows enumerates top-most to bottom)
-    $zOrderIndex = $script:enumIndex
+    # Track raw enumeration order from EnumWindows (top-most to bottom)
+    $rawZOrder = $script:enumIndex
     $script:enumIndex++
+
+    # Get window title
+    $titleBuilder = New-Object System.Text.StringBuilder 256
+    [Win32.NativeMethods]::GetWindowText($hWnd, $titleBuilder, 256) | Out-Null
+    $title = $titleBuilder.ToString()
+    
+    # Skip windows with empty titles (usually widgets or background UI)
+    if ([string]::IsNullOrWhiteSpace($title)) { return $true }
+    
+    # Skip windows with system-like names (widgets, background UI, etc.)
+    if ($title -match '^(Windows Input Experience|MainWindowView|wv_\d+)$') { return $true }
+    
+    # Skip windows in the user-configured skip list
+    foreach ($skipTitle in $script:skipWindowTitles) {
+        if ($title -eq $skipTitle) { return $true }
+    }
+
+    # Check if window is actually on-screen (visible area intersects with monitor work area)
+    $isOnScreen = ($rect.Right -gt $work.Left -and $rect.Left -lt $work.Right -and 
+                   $rect.Bottom -gt $work.Top -and $rect.Top -lt $work.Bottom)
 
     # Store window info with monitor handle as string for grouping
     $script:windows.Add([PSCustomObject]@{
@@ -162,7 +215,11 @@ $callback = [Win32.NativeMethods+EnumWindowsProc]{
         Monitor   = $hMon.ToInt64()
         IsFullscreen = $isFullscreen
         IsTopmost = $isTopmost
-        ZIndex    = $zOrderIndex
+        RawZOrder = $rawZOrder
+        Title     = $title
+        IsOnScreen = $isOnScreen
+        Left      = $rect.Left
+        Top       = $rect.Top
     }) | Out-Null
 
     return $true
@@ -173,6 +230,13 @@ $script:enumIndex = 0
 [Win32.NativeMethods]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 
 Write-Host "Collected $($windows.Count) non-maximized, non-system windows."
+
+# Assign contiguous ZIndex starting from 1 based on the subset of windows we're actually arranging
+# Sort by RawZOrder (EnumWindows order = top to bottom), then assign 1, 2, 3, etc.
+$sortedByRawZ = $windows | Sort-Object -Property RawZOrder
+for ($i = 0; $i -lt $sortedByRawZ.Count; $i++) {
+    $sortedByRawZ[$i] | Add-Member -NotePropertyName ZIndex -NotePropertyValue ($i + 1) -Force
+}
 
 if ($windows.Count -eq 0) {
     Write-Host "No non-maximized windows found to arrange."
@@ -205,60 +269,125 @@ foreach ($monKey in $monitorGroups.Keys) {
     # Partition windows into fullscreen and non-fullscreen; then split non-fullscreen by topmost
     $fullscreens = $monitorWindows | Where-Object { $_.IsFullscreen }
     $nonFullscreen = $monitorWindows | Where-Object { -not $_.IsFullscreen }
-    $topmostWindows = $nonFullscreen | Where-Object { $_.IsTopmost }
-    $normalWindows = $nonFullscreen | Where-Object { -not $_.IsTopmost }
+    
+    # FILTER: Only arrange windows that are actually on-screen (visible area overlaps monitor)
+    $onScreenWindows = $nonFullscreen | Where-Object { $_.IsOnScreen }
+    
+    $topmostWindows = $onScreenWindows | Where-Object { $_.IsTopmost }
+    $normalWindows = $onScreenWindows | Where-Object { -not $_.IsTopmost }
 
-    # Sort groups by area
+    # IMPORTANT: Assign per-monitor local layer indices separately for normal and topmost windows
+    # This ensures each group starts with layer 0, 1, 2... regardless of global Z values
+    $normalWindowsSorted = $normalWindows | Sort-Object -Property ZIndex
+    $topmostWindowsSorted = $topmostWindows | Sort-Object -Property ZIndex
+    
+    for ($i = 0; $i -lt $normalWindowsSorted.Count; $i++) {
+        $normalWindowsSorted[$i] | Add-Member -NotePropertyName LocalLayer -NotePropertyValue $i -Force
+    }
+    
+    for ($i = 0; $i -lt $topmostWindowsSorted.Count; $i++) {
+        $topmostWindowsSorted[$i] | Add-Member -NotePropertyName LocalLayer -NotePropertyValue $i -Force
+    }
+
+    # Sort groups by area for display purposes
     $sortedWindows = $normalWindows | Sort-Object -Property Area -Descending
     $sortedTopmost = $topmostWindows | Sort-Object -Property Area -Descending
     
     $monWidth = $work.Right - $work.Left
     $monHeight = $work.Bottom - $work.Top
-    Write-Host "  Monitor ${monKey}: ${monWidth}x${monHeight} - Arranging $($sortedWindows.Count) windows (work area: $($work.Left),$($work.Top) to $($work.Right),$($work.Bottom))"
+    $totalNonFS = $normalWindows.Count + $topmostWindows.Count
+    Write-Host "  Monitor ${monKey}: ${monWidth}x${monHeight} - Arranging $totalNonFS windows ($($normalWindows.Count) normal, $($topmostWindows.Count) topmost, $($fullscreens.Count) fullscreen skipped) (work area: $($work.Left),$($work.Top) to $($work.Right),$($work.Bottom))"
     
-    # Compute target sizes so each layer is strictly larger in BOTH width AND height than all layers in front
-    # Layer order is based on current Z (top-most gets smallest size), preserving existing Z ordering
-    $n = ($normalWindows.Count + $topmostWindows.Count)
+    # Compute target sizes STARTING FROM BOTTOM (largest) working UP to smallest
+    # Bottom layer should be nearly full monitor, top layer smallest
     $sizeMap = @{}
-    if ($n -gt 0) {
-        # Sort all non-fullscreen windows by current Z order (ascending = top to bottom)
-        $ascendingNormalsForSize = $nonFullscreen | Sort-Object -Property ZIndex
+    if ($normalWindows.Count -gt 0) {
+        # Use the sorted normal windows list with LocalLayer property (0 = topmost, N-1 = deepest)
+        $ascendingNormalsForSize = $normalWindowsSorted | Sort-Object -Property LocalLayer
         
-        # Define base minimum increment per layer to ensure each is visibly larger
-        $minIncrementW = [Math]::Max(50, [Math]::Floor($monWidth * 0.08))
-        $minIncrementH = [Math]::Max(40, [Math]::Floor($monHeight * 0.08))
+        # Calculate base margins and cascade offset
+        $basePadX = 20
+        $basePadY = 20
+        $cascadeOffsetX = 35
+        $cascadeOffsetY = 35
+        $minWAllowed = 300
+        $minHAllowed = 200
         
-        # Start with smallest window: use 45% of monitor (but at least 400x300)
-        $baseW = [Math]::Min($monWidth, [Math]::Max(400, [Math]::Floor($monWidth * 0.45)))
-        $baseH = [Math]::Min($monHeight, [Math]::Max(300, [Math]::Floor($monHeight * 0.45)))
+        $numLayers = $ascendingNormalsForSize.Count
         
-        # Assign sizes layer by layer, ensuring each is strictly larger in both dimensions
-        for ($idx = 0; $idx -lt $ascendingNormalsForSize.Count; $idx++) {
-            $wObj = $ascendingNormalsForSize[$idx]
-            # Each successive layer grows by the increment in both dimensions
-            $targetW = [Math]::Min($monWidth,  $baseW + ($idx * $minIncrementW))
-            $targetH = [Math]::Min($monHeight, $baseH + ($idx * $minIncrementH))
-            $sizeMap[$wObj.Handle.ToInt64()] = @{ W = $targetW; H = $targetH; Layer = $idx }
+        # Assign sizes layer by layer using LOCAL layer index (0 = top/smallest, N-1 = bottom/largest)
+        for ($localLayer = 0; $localLayer -lt $numLayers; $localLayer++) {
+            $wObj = $ascendingNormalsForSize[$localLayer]
+            
+            # Calculate margin: top layer (0) has max margin, bottom layer (N-1) has min margin
+            $k = ($numLayers - 1 - $localLayer)  # Inverted: localLayer 0->max margin, (N-1)->min margin
+            
+            $maxLeftMargin  = [Math]::Max(0, [Math]::Floor(($monWidth  - $minWAllowed) / 2))
+            $maxTopMargin   = [Math]::Max(0, [Math]::Floor(($monHeight - $minHAllowed) / 2))
+            $marginX = [Math]::Min($k * $cascadeOffsetX, $maxLeftMargin)
+            $marginY = [Math]::Min($k * $cascadeOffsetY, $maxTopMargin)
+            
+            # Calculate size: full monitor minus (base padding + layer margin) on each side
+            $targetW = $monWidth - (2 * ($basePadX + $marginX))
+            $targetH = $monHeight - (2 * ($basePadY + $marginY))
+            $targetW = [Math]::Max($minWAllowed, [Math]::Min($monWidth, $targetW))
+            $targetH = [Math]::Max($minHAllowed, [Math]::Min($monHeight, $targetH))
+            
+            $sizeMap[$wObj.Handle.ToInt64()] = @{ W = $targetW; H = $targetH; Layer = $localLayer }
         }
-
-        # Annotate windows with resolved Layer for consistent positioning
-        foreach ($w in $sortedWindows) {
-            $key = $w.Handle.ToInt64()
-            $layer = 0
-            if ($sizeMap.ContainsKey($key)) { $layer = [int]$sizeMap[$key].Layer }
-            $w | Add-Member -NotePropertyName Layer -NotePropertyValue $layer -Force
+    }
+    
+    # Calculate sizes for topmost windows using their own layer indices
+    if ($topmostWindows.Count -gt 0) {
+        $ascendingTopmostForSize = $topmostWindowsSorted | Sort-Object -Property LocalLayer
+        
+        # Calculate base margins and cascade offset
+        $basePadX = 20
+        $basePadY = 20
+        $cascadeOffsetX = 35
+        $cascadeOffsetY = 35
+        $minWAllowed = 300
+        $minHAllowed = 200
+        
+        $numLayers = $ascendingTopmostForSize.Count
+        
+        # Assign sizes layer by layer using LOCAL layer index for topmost windows
+        for ($localLayer = 0; $localLayer -lt $numLayers; $localLayer++) {
+            $wObj = $ascendingTopmostForSize[$localLayer]
+            
+            # Calculate margin: top layer (0) has max margin, bottom layer (N-1) has min margin
+            $k = ($numLayers - 1 - $localLayer)  # Inverted: localLayer 0->max margin, (N-1)->min margin
+            
+            $maxLeftMargin  = [Math]::Max(0, [Math]::Floor(($monWidth  - $minWAllowed) / 2))
+            $maxTopMargin   = [Math]::Max(0, [Math]::Floor(($monHeight - $minHAllowed) / 2))
+            $marginX = [Math]::Min($k * $cascadeOffsetX, $maxLeftMargin)
+            $marginY = [Math]::Min($k * $cascadeOffsetY, $maxTopMargin)
+            
+            # Calculate size: full monitor minus (base padding + layer margin) on each side
+            $targetW = $monWidth - (2 * ($basePadX + $marginX))
+            $targetH = $monHeight - (2 * ($basePadY + $marginY))
+            $targetW = [Math]::Max($minWAllowed, [Math]::Min($monWidth, $targetW))
+            $targetH = [Math]::Max($minHAllowed, [Math]::Min($monHeight, $targetH))
+            
+            $sizeMap[$wObj.Handle.ToInt64()] = @{ W = $targetW; H = $targetH; Layer = $localLayer }
         }
-        foreach ($w in $sortedTopmost) {
-            $key = $w.Handle.ToInt64()
-            $layer = 0
-            if ($sizeMap.ContainsKey($key)) { $layer = [int]$sizeMap[$key].Layer }
-            $w | Add-Member -NotePropertyName Layer -NotePropertyValue $layer -Force
-        }
+    }
+    
+    # Annotate windows with resolved Layer for consistent positioning
+    foreach ($w in $sortedWindows) {
+        $key = $w.Handle.ToInt64()
+        $layer = 0
+        if ($sizeMap.ContainsKey($key)) { $layer = [int]$sizeMap[$key].Layer }
+        $w | Add-Member -NotePropertyName Layer -NotePropertyValue $layer -Force
+    }
+    foreach ($w in $sortedTopmost) {
+        $key = $w.Handle.ToInt64()
+        $layer = 0
+        if ($sizeMap.ContainsKey($key)) { $layer = [int]$sizeMap[$key].Layer }
+        $w | Add-Member -NotePropertyName Layer -NotePropertyValue $layer -Force
     }
 
     # Cascade settings: fixed offset between each layer
-    $startX = $work.Left + 20
-    $startY = $work.Top + 20
     $cascadeOffsetX = 35
     $cascadeOffsetY = 35
     
@@ -277,6 +406,7 @@ foreach ($monKey in $monitorGroups.Keys) {
             $w = [Math]::Min($win.Width,  [Math]::Max(100, $monWidth))
             $h = [Math]::Min($win.Height, [Math]::Max(100, $monHeight))
             $layer = -1
+            Write-Host "    Window (FALLBACK): ${w}x${h}"
         }
         
         # Pyramid positioning: symmetric margins based on layer so both top-left and bottom-right shift by layer*cascade
